@@ -8,12 +8,16 @@ namespace clay {
 struct EValue : public Object {
     TypePtr type;
     char *addr;
+    //free addr only when ownsAddr true
+    bool ownsAddr:1;
     bool forwardedRValue:1;
     EValue(TypePtr type, char *addr)
         : Object(EVALUE), type(type), addr(addr),
+          ownsAddr(true),
           forwardedRValue(false) {}
     EValue(TypePtr type, char *addr, bool forwardedRValue)
         : Object(EVALUE), type(type), addr(addr),
+          ownsAddr(true),
           forwardedRValue(forwardedRValue) {}
 
     template<typename T>
@@ -48,32 +52,32 @@ void evaluateReturnSpecs(llvm::ArrayRef<ReturnSpecPtr> returnSpecs,
                          EnvPtr env,
                          vector<uint8_t> &isRef,
                          vector<TypePtr> &types,
-                         CompilerStatePtr cst);
+                         CompilerState* cst);
 
-MultiStaticPtr evaluateExprStatic(ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
-ObjectPtr evaluateOneStatic(ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
-MultiStaticPtr evaluateMultiStatic(ExprListPtr exprs, EnvPtr env, CompilerStatePtr cst);
+MultiStaticPtr evaluateExprStatic(ExprPtr expr, EnvPtr env, CompilerState* cst);
+ObjectPtr evaluateOneStatic(ExprPtr expr, EnvPtr env, CompilerState* cst);
+MultiStaticPtr evaluateMultiStatic(ExprListPtr exprs, EnvPtr env, CompilerState* cst);
 
-TypePtr evaluateType(ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
+TypePtr evaluateType(ExprPtr expr, EnvPtr env, CompilerState* cst);
 void evaluateMultiType(ExprListPtr exprs, EnvPtr env, vector<TypePtr> &out,
-                       CompilerStatePtr cst);
+                       CompilerState* cst);
 IdentifierPtr evaluateIdentifier(ExprPtr expr, EnvPtr env);
-bool evaluateBool(ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
+bool evaluateBool(ExprPtr expr, EnvPtr env, CompilerState* cst);
 void evaluatePredicate(llvm::ArrayRef<PatternVar> patternVars,
-    ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
+    ExprPtr expr, EnvPtr env, CompilerState* cst);
 void evaluateStaticAssert(Location const& location,
                           const ExprPtr& cond, const ExprListPtr& message, EnvPtr env,
-                          CompilerStatePtr cst);
+                          CompilerState* cst);
 
-ValueHolderPtr intToValueHolder(int x, CompilerStatePtr cst);
-ValueHolderPtr sizeTToValueHolder(size_t x, CompilerStatePtr cst);
+ValueHolderPtr intToValueHolder(int x, CompilerState* cst);
+ValueHolderPtr sizeTToValueHolder(size_t x, CompilerState* cst);
 ValueHolderPtr ptrDiffTToValueHolder(ptrdiff_t x);
-ValueHolderPtr boolToValueHolder(bool x, CompilerStatePtr cst);
+ValueHolderPtr boolToValueHolder(bool x, CompilerState* cst);
 
 size_t valueHolderToSizeT(ValueHolderPtr vh);
 
 ObjectPtr makeTupleValue(llvm::ArrayRef<ObjectPtr> elements,
-                         CompilerStatePtr cst);
+                         CompilerState* cst);
 ObjectPtr evalueToStatic(EValuePtr ev);
 
 void evalValueInit(EValuePtr dest);
@@ -84,13 +88,13 @@ void evalValueAssign(EValuePtr dest, EValuePtr src);
 void evalValueMoveAssign(EValuePtr dest, EValuePtr src);
 bool evalToBoolFlag(EValuePtr a, bool acceptStatics);
 
-unsigned evalMarkStack();
-void evalDestroyStack(unsigned marker);
-void evalPopStack(unsigned marker);
-void evalDestroyAndPopStack(unsigned marker);
+unsigned evalMarkStack(CompilerState* cst);
+void evalDestroyStack(unsigned marker, CompilerState* cst);
+void evalPopStack(unsigned marker, CompilerState* cst);
+void evalDestroyAndPopStack(unsigned marker, CompilerState* cst);
 EValuePtr evalAllocValue(TypePtr t);
 
-EValuePtr evalOneAsRef(ExprPtr expr, EnvPtr env, CompilerStatePtr cst);
+EValuePtr evalOneAsRef(ExprPtr expr, EnvPtr env, CompilerState* cst);
 
 }
 

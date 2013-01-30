@@ -21,17 +21,22 @@ struct ReplItem {
 };
 
 ModulePtr parse(llvm::StringRef moduleName, SourcePtr source, 
-                CompilerStatePtr cst, ParserFlags flags = NoParserFlags);
-ExprPtr parseExpr(SourcePtr source, unsigned offset, size_t length);
-ExprListPtr parseExprList(SourcePtr source, unsigned offset, size_t length);
+                CompilerState* cst, ParserFlags flags = NoParserFlags);
+ExprPtr parseExpr(SourcePtr source, unsigned offset, size_t length,
+                  CompilerState* cst);
+ExprListPtr parseExprList(SourcePtr source, unsigned offset, size_t length,
+                          CompilerState* cst);
 void parseStatements(SourcePtr source, unsigned offset, size_t length,
-    vector<StatementPtr> &statements);
+    vector<StatementPtr> &statements, CompilerState* cst);
 void parseTopLevelItems(SourcePtr source, unsigned offset, size_t length,
-    vector<TopLevelItemPtr> &topLevels, Module *);
-ReplItem parseInteractive(SourcePtr source, unsigned offset, size_t length);
+    vector<TopLevelItemPtr> &topLevels, Module *, CompilerState* cst);
 
 typedef vector<Token>(*AddTokensCallback)();
-void setAddTokens(AddTokensCallback f);
+ReplItem parseInteractive(SourcePtr source, unsigned offset, size_t length,
+                          AddTokensCallback f,
+                          CompilerState* cst);
+
+
 
 }
 

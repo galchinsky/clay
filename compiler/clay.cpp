@@ -4,6 +4,9 @@
 #include "codegen.hpp"
 #include "loader.hpp"
 #include "invoketables.hpp"
+#include "externals.hpp"
+#include "evaluator.hpp"
+#include "interactive.hpp"
 
 // for _exit
 #ifdef _WIN32
@@ -140,7 +143,7 @@ static void addOptimizationPasses(llvm::PassManager &passes,
     }
 }
 
-static bool linkLibraries(llvm::Module *module, llvm::ArrayRef<string>  libSearchPaths, llvm::ArrayRef<string>  libs, CompilerStatePtr cst)
+static bool linkLibraries(llvm::Module *module, llvm::ArrayRef<string>  libSearchPaths, llvm::ArrayRef<string>  libs, CompilerState* cst)
 {
     if (libs.empty())
         return true;
@@ -205,7 +208,7 @@ static bool runModule(llvm::Module *module,
                       char const* const* envp,
                       llvm::ArrayRef<string>  libSearchPaths,
                       llvm::ArrayRef<string>  libs,
-                      CompilerStatePtr cst)
+                      CompilerState* cst)
 {
     if (!linkLibraries(module, libSearchPaths, libs, cst)) {
         return false;
@@ -317,7 +320,7 @@ static bool generateBinary(llvm::Module *module,
                            bool debug,
                            llvm::ArrayRef<string> arguments,
                            bool verbose,
-                           CompilerStatePtr cst)
+                           CompilerState* cst)
 {
     int fd;
     PathString tempObj;
@@ -562,6 +565,7 @@ int main2(int argc, char **argv, char const* const* envp) {
 
     string clayFile;
     string outputFile;
+    string hostTriple = llvm::sys::getDefaultTargetTriple();
     string targetTriple = llvm::sys::getDefaultTargetTriple();
 
     string targetCPU;
@@ -585,7 +589,14 @@ int main2(int argc, char **argv, char const* const* envp) {
 
     bool debug = false;
 
-    CompilerStatePtr cst = new CompilerState();
+    CompilerState hostState;
+    CompilerState targetState;
+    CompilerState* host = &hostState;
+    CompilerState* target = &targetState;
+    host->host = host;
+    host->target = target;
+    target->host = host;
+    target->target = target;
 
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "-shared") == 0))
@@ -863,7 +874,8 @@ int main2(int argc, char **argv, char const* const* envp) {
                 ? string()
                 : string(equalSignp + 1);
 
-            cst->globalFlags[name] = value;
+            host->globalFlags[name] = value;
+            target->globalFlags[name] = value;
         }
         else if (strstr(argv[i], "-I") == argv[i]) {
             string path = argv[i] + strlen("-I");
@@ -1001,27 +1013,35 @@ int main2(int argc, char **argv, char const* const* envp) {
     if ((emitLLVM || emitAsm || emitObject) && run)
         run = false;
 
-    setInlineEnabled(inlineEnabled, cst);
-    setExceptionsEnabled(exceptions, cst);
+    setInlineEnabled(inlineEnabled, host);
+    setInlineEnabled(inlineEnabled, target);
+    setExceptionsEnabled(exceptions, host);
+    setExceptionsEnabled(exceptions, target);
     
-    setFinalOverloadsEnabled(finalOverloadsEnabled, cst);
+    setFinalOverloadsEnabled(finalOverloadsEnabled, host);
+    setFinalOverloadsEnabled(finalOverloadsEnabled, target);
     
     llvm::Triple llvmTriple(targetTriple);
     targetTriple = llvmTriple.str();
 
     std::string moduleName = clayScript.empty() ? clayFile : "-e";
 
+    initLLVM(hostTriple, 
+             "", "", false, moduleName + "host", "",
+             (sharedLib || genPIC), debug, 0, host);
     llvm::TargetMachine *targetMachine = initLLVM(targetTriple, 
         targetCPU, targetFeatures, softFloat, moduleName, "",
-        (sharedLib || genPIC), debug, optLevel, cst);
+        (sharedLib || genPIC), debug, optLevel, target);
     if (targetMachine == NULL)
     {
         llvm::errs() << "error: unable to initialize LLVM for target " << targetTriple << "\n";
         return 1;
     }
 
-    initTypes(cst);
-    initExternalTarget(targetTriple, cst);
+    initTypes(host);
+    initTypes(target);
+    initExternalTarget(hostTriple, host);
+    initExternalTarget(targetTriple, target);
 
     // Try environment variables first
     char* libclayPath = getenv("CLAY_PATH");
@@ -1069,8 +1089,8 @@ int main2(int argc, char **argv, char const* const* envp) {
         }
     }
 
-    setSearchPath(searchPath, cst);
-
+    setSearchPath(searchPath, host);
+    setSearchPath(searchPath, target);
 
     if (outputFile.empty()) {
         llvm::StringRef clayFileBasename = llvm::sys::path::stem(clayFile);
@@ -1123,22 +1143,40 @@ int main2(int argc, char **argv, char const* const* envp) {
 
     loadTimer.start();
     try {
-        initLoader(cst);
+        initLoader(host);
+        initLoader(target);
 
         ModulePtr m;
+        ModulePtr hostm;
         string clayScriptSource;
         vector<string> sourceFiles;
         if (!clayScript.empty()) {
             clayScriptSource = clayScriptImports + "main() {\n" + clayScript + "}";
-            m = loadProgramSource("-e", clayScriptSource, verbose, repl, cst);
-        } else if (generateDeps)
-            m = loadProgram(clayFile, &sourceFiles, verbose, repl, cst);
-        else
-            m = loadProgram(clayFile, NULL, verbose, repl, cst);
+            m = loadProgramSource("-e", clayScriptSource, verbose, repl, target);
+            hostm = loadProgramSource("-e", clayScriptSource, verbose, repl, host);
+        } else if (generateDeps) {
+            m = loadProgram(clayFile, &sourceFiles, verbose, repl, target);
+            hostm = loadProgram(clayFile, &sourceFiles, verbose, repl, host);
+        }
+        else {
+            m = loadProgram(clayFile, NULL, verbose, repl, target);
+            hostm = loadProgram(clayFile, NULL, verbose, repl, host);
+        }
 
         loadTimer.stop();
+
+        codegenEntryPoints(hostm, codegenExternals, false);
+        llvm::EngineBuilder eb(host->llvmModule);
+        llvm::TargetOptions targetOptions;
+        targetOptions.JITExceptionHandling = true;
+        eb.setTargetOptions(targetOptions);
+        llvm::ExecutionEngine* engine = eb.create();
+        engine->runStaticConstructorsDestructors(false);
+        host->jit = new JitContext(hostm, engine, host);
+
+
         compileTimer.start();
-        codegenEntryPoints(m, codegenExternals);
+        codegenEntryPoints(m, codegenExternals, true);
         compileTimer.stop();
 
         if (generateDeps) {
@@ -1172,18 +1210,18 @@ int main2(int argc, char **argv, char const* const* envp) {
         if (!repl)
         {
             if (optLevel > 0)
-                optimizeLLVM(cst->llvmModule, optLevel, internalize);
+                optimizeLLVM(target->llvmModule, optLevel, internalize);
         }
         optTimer.stop();
 
         if (run) {
             vector<string> argv;
             argv.push_back(clayFile);
-            runModule(cst->llvmModule, argv, envp, libSearchPath, libraries, cst);
+            runModule(target->llvmModule, argv, envp, libSearchPath, libraries, target);
         }
         else if (repl) {
-            linkLibraries(cst->llvmModule, libSearchPath, libraries, cst);
-            runInteractive(m);
+            linkLibraries(host->llvmModule, libSearchPath, libraries, host);
+            runInteractive(host->jit);
         }
         else if (emitLLVM || emitAsm || emitObject) {
             string errorInfo;
@@ -1196,9 +1234,9 @@ int main2(int argc, char **argv, char const* const* envp) {
             }
             outputTimer.start();
             if (emitLLVM)
-                generateLLVM(cst->llvmModule, emitAsm, &out);
+                generateLLVM(target->llvmModule, emitAsm, &out);
             else if (emitAsm || emitObject)
-                generateAssembly(cst->llvmModule, targetMachine, &out, emitObject);
+                generateAssembly(target->llvmModule, targetMachine, &out, emitObject);
             outputTimer.stop();
         }
         else {
@@ -1234,10 +1272,10 @@ int main2(int argc, char **argv, char const* const* envp) {
             copy(librariesArgs.begin(), librariesArgs.end(), back_inserter(arguments));
 
             outputTimer.start();
-            result = generateBinary(cst->llvmModule, targetMachine, 
+            result = generateBinary(target->llvmModule, targetMachine, 
                                     outputFile, clangPath,
                                     exceptions, sharedLib, debug, 
-                                    arguments, verbose, cst);
+                                    arguments, verbose, target);
             outputTimer.stop();
             if (!result)
                 return 1;

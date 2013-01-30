@@ -21,23 +21,38 @@
 
 namespace clay {
 
-CompilerState::CompilerState() :  Object(DONT_CARE){
-    _finalOverloadsEnabled = false;
-    _inlineEnabled = true;
-    _exceptionsEnabled = true;
-    invokeTablesInitialized = false;
+CompilerState::CompilerState() :
+    _finalOverloadsEnabled(false),
+    _inlineEnabled(true),
+    _exceptionsEnabled(true),
+    invokeTablesInitialized(false),
+    analysisCachingDisabled(0)   
+{
+
 }
 
+void constructorDestructorCtxPush(CompilerState* cst) {
+    cst->constructorsCtxStack.push(cst->constructorsCtx);
+    cst->destructorsCtxStack.push(cst->destructorsCtx);        
+}
+ 
+void constructorDestructorCtxPop(CompilerState* cst) {
+    cst->constructorsCtx = cst->constructorsCtxStack.top();
+    cst->constructorsCtxStack.pop();
+    cst->destructorsCtx = cst->destructorsCtxStack.top();        
+    cst->destructorsCtxStack.pop();
+ }
 
-static bool isMsvcTarget(CompilerStatePtr cst) {
+
+static bool isMsvcTarget(CompilerState* cst) {
     llvm::Triple target(cst->llvmModule->getTargetTriple());
     return (target.getOS() == llvm::Triple::Win32);
 }
 
-llvm::PointerType *exceptionReturnType(CompilerStatePtr cst) {
+llvm::PointerType *exceptionReturnType(CompilerState* cst) {
     return llvmPointerType(cst->int8Type);
 }
-llvm::Value *noExceptionReturnValue(CompilerStatePtr cst) {
+llvm::Value *noExceptionReturnValue(CompilerState* cst) {
     return llvm::ConstantPointerNull::get(exceptionReturnType(cst));
 }
 
@@ -127,7 +142,7 @@ void codegenStaticObject(ObjectPtr x,
                          MultiCValuePtr out);
 
 void codegenGVarInstance(GVarInstancePtr x);
-void codegenExternalVariable(ExternalVariablePtr x, CompilerStatePtr cst);
+void codegenExternalVariable(ExternalVariablePtr x, CompilerState* cst);
 void codegenExternalProcedure(ExternalProcedurePtr x, bool codegenBody);
 
 void codegenValueHolder(ValueHolderPtr x,
@@ -242,22 +257,22 @@ void codegenPrimOp(PrimOpPtr x,
 //
 
 
-bool inlineEnabled(CompilerStatePtr cst)
+bool inlineEnabled(CompilerState* cst)
 {
     return cst->_inlineEnabled;
 }
 
-void setInlineEnabled(bool enabled, CompilerStatePtr cst)
+void setInlineEnabled(bool enabled, CompilerState* cst)
 {
     cst->_inlineEnabled = enabled;
 }
 
-bool exceptionsEnabled(CompilerStatePtr cst)
+bool exceptionsEnabled(CompilerState* cst)
 {
     return cst->_exceptionsEnabled;
 }
 
-void setExceptionsEnabled(bool enabled, CompilerStatePtr cst)
+void setExceptionsEnabled(bool enabled, CompilerState* cst)
 {
     cst->_exceptionsEnabled = enabled;
 }
@@ -956,7 +971,7 @@ void codegenExpr(ExprPtr expr,
                  CodegenContext* ctx,
                  MultiCValuePtr out)
 {
-    CompilerStatePtr cst = ctx->cst;
+    CompilerState* cst = ctx->cst;
     LocationContext loc(expr->location);
 
     switch (expr->exprKind) {
@@ -1419,7 +1434,7 @@ static void printModuleQualification(llvm::raw_ostream &os, ModulePtr mod)
 
 void codegenGVarInstance(GVarInstancePtr x)
 {
-    CompilerStatePtr cst = x->env->cst;
+    CompilerState* cst = x->env->cst;
     assert(!x->llGlobal);
     MultiPValuePtr mpv = safeAnalyzeGVarInstance(x);
     assert(mpv->size() == 1);
@@ -1493,7 +1508,7 @@ void codegenGVarInstance(GVarInstancePtr x)
 // codegenExternalVariable
 //
 
-void codegenExternalVariable(ExternalVariablePtr x, CompilerStatePtr cst)
+void codegenExternalVariable(ExternalVariablePtr x, CompilerState* cst)
 {
     assert(!x->llGlobal);
     if (!x->attributesVerified)
@@ -1535,7 +1550,7 @@ void codegenExternalVariable(ExternalVariablePtr x, CompilerStatePtr cst)
 
 void codegenExternalProcedure(ExternalProcedurePtr x, bool codegenBody)
 {
-    CompilerStatePtr cst = safeLookupModule(x->env)->cst.ptr();
+    CompilerState* cst = x->env->cst;
     llvm::Module* llvmModule = cst->llvmModule;
     llvm::DIBuilder* llvmDIBuilder = cst->llvmDIBuilder;
 
@@ -2622,7 +2637,7 @@ void codegenLowlevelCall(llvm::Value *llCallable,
                          llvm::ArrayRef<llvm::Value *> args,
                          CodegenContext* ctx)
 {
-    CompilerStatePtr cst = ctx->cst;
+    CompilerState* cst = ctx->cst;
     llvm::Module* llvmModule = cst->llvmModule;
 
     llvm::Value *result = ctx->builder->CreateCall(llCallable, args);
@@ -2669,7 +2684,7 @@ void codegenLowlevelCall(llvm::Value *llCallable,
 InvokeEntry* codegenCallable(ObjectPtr x,
                              llvm::ArrayRef<TypePtr> argsKey,
                              llvm::ArrayRef<ValueTempness> argsTempness,
-                             CompilerStatePtr cst)
+                             CompilerState* cst)
 {
     InvokeEntry* entry =
         safeAnalyzeCallable(x, argsKey, argsTempness, cst);
@@ -2735,9 +2750,9 @@ static const char * parseBracketedExpr(const char * first,
 
 static void interpolateExpr(SourcePtr source, unsigned offset, unsigned length,
                             EnvPtr env, llvm::raw_ostream &outstream,
-                            CompilerStatePtr cst)
+                            CompilerState* cst)
 {
-    ExprPtr expr = parseExpr(source, offset, length);
+    ExprPtr expr = parseExpr(source, offset, length, cst);
     ObjectPtr x = evaluateOneStatic(expr, env, cst);
     LocationContext loc(expr->location);
     if (x->objKind == TYPE) {
@@ -2821,7 +2836,7 @@ static bool interpolateLLVMCode(LLVMCodePtr llvmBody, string &out, EnvPtr env)
 
 void codegenLLVMBody(InvokeEntry* entry, llvm::StringRef callableName)
 {
-    CompilerStatePtr cst = safeLookupModule(entry->env)->cst.ptr();
+    CompilerState* cst = safeLookupModule(entry->env)->cst;
 
     string llFunc;
     llvm::raw_string_ostream out(llFunc);
@@ -2973,7 +2988,7 @@ static bool blockIsNop(llvm::BasicBlock *codeBlock, llvm::BasicBlock *returnBloc
 
 void codegenCodeBody(InvokeEntry* entry)
 {
-    CompilerStatePtr cst = entry->env->cst;
+    CompilerState* cst = entry->env->cst;
     llvm::DIBuilder* llvmDIBuilder = cst->llvmDIBuilder;
 
     assert(entry->analyzed);
@@ -3335,7 +3350,7 @@ void codegenCodeBody(InvokeEntry* entry)
 // codegenCWrapper
 //
 
-void codegenCWrapper(InvokeEntry* entry, CallingConv cc, CompilerStatePtr cst)
+void codegenCWrapper(InvokeEntry* entry, CallingConv cc, CompilerState* cst)
 {
     assert(!entry->llvmCWrappers[cc]);
     ExternalTargetPtr target = getExternalTarget(cst);
@@ -5169,7 +5184,7 @@ void codegenPrimOp(PrimOpPtr x,
                    CodegenContext* ctx,
                    MultiCValuePtr out)
 {
-    CompilerStatePtr cst = ctx->cst.ptr();
+    CompilerState* cst = ctx->cst;
     switch (x->primOpCode) {
 
     case PRIM_TypeP : {
@@ -7027,7 +7042,7 @@ static void finalizeSimpleContext(CodegenContext* ctx,
     ctx->initBuilder->CreateBr(&(*bbi));
 }
 
-static void initializeCtorsDtors(CompilerStatePtr cst)
+static void initializeCtorsDtors(CompilerState* cst)
 {
     setUpSimpleContext(cst->constructorsCtx, "clayglobals_init");
     setUpSimpleContext(cst->destructorsCtx, "clayglobals_destroy");
@@ -7047,7 +7062,7 @@ static void initializeCtorsDtors(CompilerStatePtr cst)
     }
 }
 
-static void codegenAtexitDestructors(CompilerStatePtr cst)
+static void codegenAtexitDestructors(CompilerState* cst)
 {
     llvm::Function *atexitFunc = cst->llvmModule->getFunction("atexit");
     if (!atexitFunc) {
@@ -7067,7 +7082,7 @@ static void codegenAtexitDestructors(CompilerStatePtr cst)
                                                   cst->destructorsCtx->llvmFunc);
 }
 
-static void finalizeCtorsDtors(CompilerStatePtr cst)
+static void finalizeCtorsDtors(CompilerState* cst)
 {
     if (isMsvcTarget(cst))
         codegenAtexitDestructors(cst);
@@ -7081,7 +7096,7 @@ static void finalizeCtorsDtors(CompilerStatePtr cst)
     finalizeSimpleContext(cst->destructorsCtx, operator_exceptionInFinalizer(cst));
 }
 
-static void generateLLVMCtorsAndDtors(CompilerStatePtr cst) {
+static void generateLLVMCtorsAndDtors(CompilerState* cst) {
 
     // make types for llvm.global_ctors, llvm.global_dtors
     vector<llvm::Type *> fieldTypes;
@@ -7138,7 +7153,7 @@ static void generateLLVMCtorsAndDtors(CompilerStatePtr cst) {
 
 void codegenMain(ModulePtr module)
 {
-    CompilerStatePtr cst = module->cst;
+    CompilerState* cst = module->cst;
     IdentifierPtr main = Identifier::get("main");
     IdentifierPtr argc = Identifier::get("argc");
     IdentifierPtr argv = Identifier::get("argv");
@@ -7170,7 +7185,7 @@ void codegenMain(ModulePtr module)
                               false,
                               new ObjectExpr(cst->cIntType.ptr()),
                               mainBody.ptr(),
-                              new ExprList());
+                              new ExprList(), cst);
 
     entryProc->env = module->env;
 
@@ -7197,8 +7212,9 @@ static void codegenModuleEntryPoints(ModulePtr module, bool importedExternals)
     }
 }
 
-void codegenEntryPoints(ModulePtr module, bool importedExternals)
+void codegenEntryPoints(ModulePtr module, bool importedExternals, bool codegenMain_)
 {
+    constructorDestructorCtxPush(module->cst);
     CodegenContext theConstructorCtx(module->cst);
     CodegenContext theDestructorCtx(module->cst);
 
@@ -7212,7 +7228,7 @@ void codegenEntryPoints(ModulePtr module, bool importedExternals)
 
     ObjectPtr mainProc = lookupPrivate(module, Identifier::get("main"));
     
-    if (mainProc != NULL)
+    if (mainProc != NULL && codegenMain_)
         codegenMain(module);
 
     finalizeCtorsDtors(module->cst);
@@ -7220,8 +7236,7 @@ void codegenEntryPoints(ModulePtr module, bool importedExternals)
     if (module->cst->llvmDIBuilder != NULL)
         module->cst->llvmDIBuilder->finalize();
 
-    module->cst->constructorsCtx = NULL;
-    module->cst->destructorsCtx = NULL;
+    constructorDestructorCtxPop(module->cst);
 }
 
 
@@ -7239,7 +7254,7 @@ llvm::TargetMachine *initLLVM(llvm::StringRef targetTriple,
     bool relocPic,
     bool debug,
     unsigned optLevel,
-    CompilerStatePtr cst)
+    CompilerState* cst)
 {
     llvm::InitializeAllTargets();
     llvm::InitializeAllTargetMCs();
@@ -7306,12 +7321,9 @@ llvm::TargetMachine *initLLVM(llvm::StringRef targetTriple,
 }
 
 void codegenBeforeRepl(ModulePtr module) {
-    CodegenContext* theConstructorCtx = new CodegenContext(module->cst);
-    CodegenContext* theDestructorCtx = new CodegenContext(module->cst);
-    delete module->cst->constructorsCtx;
-    delete module->cst->destructorsCtx;
-    module->cst->constructorsCtx = theConstructorCtx;
-    module->cst->destructorsCtx = theDestructorCtx;
+    constructorDestructorCtxPush(module->cst);
+    module->cst->constructorsCtx = new CodegenContext(module->cst);
+    module->cst->destructorsCtx = new CodegenContext(module->cst);
     //codegenTopLevelLLVM(module);
     codegenTopLevelLLVMRecursive(module);
     initializeCtorsDtors(module->cst);
@@ -7320,10 +7332,11 @@ void codegenBeforeRepl(ModulePtr module) {
 }
 
 void codegenAfterRepl(llvm::Function*& ctor, llvm::Function*& dtor, 
-                      CompilerStatePtr c) {
+                      CompilerState* c) {
     finalizeCtorsDtors(c);
     ctor = c->constructorsCtx->llvmFunc;
     dtor = c->destructorsCtx->llvmFunc;
+    constructorDestructorCtxPop(c);
 }
 
 }

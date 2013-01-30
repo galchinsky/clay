@@ -8,6 +8,7 @@
 
 #include <string>
 #include <vector>
+#include <stack>
 #include <exception>
 #include <map>
 #include <set>
@@ -748,9 +749,6 @@ typedef Pointer<ObjectTable> ObjectTablePtr;
 
 typedef Pointer<MatchResult> MatchResultPtr;
 
-typedef Pointer<CompilerState> CompilerStatePtr;
-
-
 
 //
 // Source, Location
@@ -993,9 +991,16 @@ extern "C" void displayCompileContext();
 struct CodegenContext;
 struct InvokeSet;
 struct ExternalTarget;
+struct JitContext;
 
-struct CompilerState : public Object {
+struct CompilerState {
     CompilerState();
+
+    CompilerState* host;
+    CompilerState* target;
+
+    JitContext* jit;
+
     //loader
     vector<PathString> searchPath;
     vector<llvm::SmallString<32> > moduleSuffixes;
@@ -1009,6 +1014,97 @@ struct CompilerState : public Object {
     ModulePtr operatorsModuleCached;
     ModulePtr preludeModuleCached;
 
+    #define DEFINE_PRIM_CACHE(name) \
+        ObjectPtr primitiveCached##name;\
+        ExprPtr primitiveExprCached##name;
+
+        DEFINE_PRIM_CACHE(addressOf)
+        DEFINE_PRIM_CACHE(boolNot)
+        DEFINE_PRIM_CACHE(Pointer)
+        DEFINE_PRIM_CACHE(CodePointer)
+        DEFINE_PRIM_CACHE(ExternalCodePointer)
+        DEFINE_PRIM_CACHE(AttributeCCall)
+        DEFINE_PRIM_CACHE(AttributeStdCall)
+        DEFINE_PRIM_CACHE(AttributeFastCall)
+        DEFINE_PRIM_CACHE(AttributeThisCall)
+        DEFINE_PRIM_CACHE(AttributeLLVMCall)
+        DEFINE_PRIM_CACHE(Array)
+        DEFINE_PRIM_CACHE(Vec)
+        DEFINE_PRIM_CACHE(Tuple)
+        DEFINE_PRIM_CACHE(Union)
+        DEFINE_PRIM_CACHE(Static)
+        DEFINE_PRIM_CACHE(activeException)
+        DEFINE_PRIM_CACHE(ByRef)
+        DEFINE_PRIM_CACHE(RecordWithProperties)    
+    #undef DEFINE_PRIM_CACHE
+
+    #define DEFINE_OPERATOR_CACHE(name) \
+        ObjectPtr operatorCached##name;\
+        ExprPtr operatorExprCached##name;
+
+        DEFINE_OPERATOR_CACHE(dereference)
+        DEFINE_OPERATOR_CACHE(prefixOperator)
+        DEFINE_OPERATOR_CACHE(infixOperator)
+        DEFINE_OPERATOR_CACHE(caseP)
+        DEFINE_OPERATOR_CACHE(tupleLiteral)
+        DEFINE_OPERATOR_CACHE(staticIndex)
+        DEFINE_OPERATOR_CACHE(index)
+        DEFINE_OPERATOR_CACHE(fieldRef)
+        DEFINE_OPERATOR_CACHE(call)
+        DEFINE_OPERATOR_CACHE(destroy)
+        DEFINE_OPERATOR_CACHE(copy)
+        DEFINE_OPERATOR_CACHE(move)
+        DEFINE_OPERATOR_CACHE(assign)
+        DEFINE_OPERATOR_CACHE(updateAssign)
+        DEFINE_OPERATOR_CACHE(prefixUpdateAssign)
+        DEFINE_OPERATOR_CACHE(indexAssign)
+        DEFINE_OPERATOR_CACHE(indexUpdateAssign)
+        DEFINE_OPERATOR_CACHE(fieldRefAssign)
+        DEFINE_OPERATOR_CACHE(fieldRefUpdateAssign)
+        DEFINE_OPERATOR_CACHE(staticIndexAssign)
+        DEFINE_OPERATOR_CACHE(staticIndexUpdateAssign)
+        DEFINE_OPERATOR_CACHE(callMain)
+        DEFINE_OPERATOR_CACHE(charLiteral)
+        DEFINE_OPERATOR_CACHE(iterator)
+        DEFINE_OPERATOR_CACHE(nextValue)
+        DEFINE_OPERATOR_CACHE(hasValueP)
+        DEFINE_OPERATOR_CACHE(getValue)
+        DEFINE_OPERATOR_CACHE(throwValue)
+        DEFINE_OPERATOR_CACHE(exceptionIsP)
+        DEFINE_OPERATOR_CACHE(exceptionAs)
+        DEFINE_OPERATOR_CACHE(exceptionAsAny)
+        DEFINE_OPERATOR_CACHE(continueException)
+        DEFINE_OPERATOR_CACHE(unhandledExceptionInExternal)
+        DEFINE_OPERATOR_CACHE(exceptionInInitializer)
+        DEFINE_OPERATOR_CACHE(exceptionInFinalizer)
+        DEFINE_OPERATOR_CACHE(packMultiValuedFreeVarByRef)
+        DEFINE_OPERATOR_CACHE(packMultiValuedFreeVar)
+        DEFINE_OPERATOR_CACHE(unpackMultiValuedFreeVarAndDereference)
+        DEFINE_OPERATOR_CACHE(unpackMultiValuedFreeVar)
+        DEFINE_OPERATOR_CACHE(variantReprType)
+        DEFINE_OPERATOR_CACHE(DispatchTagCount)
+        DEFINE_OPERATOR_CACHE(dispatchTag)
+        DEFINE_OPERATOR_CACHE(dispatchIndex)
+        DEFINE_OPERATOR_CACHE(invalidDispatch)
+        DEFINE_OPERATOR_CACHE(stringLiteral)
+        DEFINE_OPERATOR_CACHE(ifExpression)
+        DEFINE_OPERATOR_CACHE(asExpression)
+        DEFINE_OPERATOR_CACHE(typeToRValue)
+        DEFINE_OPERATOR_CACHE(typesToRValues)
+        DEFINE_OPERATOR_CACHE(doIntegerAddChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerSubtractChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerMultiplyChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerQuotientChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerRemainderChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerShiftLeftChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerNegateChecked)
+        DEFINE_OPERATOR_CACHE(doIntegerConvertChecked)
+
+    #undef DEFINE_OPERATOR_CACHE
+    
+
+    map<int, string> primOpNames;
+
     //codegen
     llvm::Module *llvmModule;
     llvm::DIBuilder *llvmDIBuilder;
@@ -1019,6 +1115,8 @@ struct CompilerState : public Object {
     llvm::StringMap<llvm::Constant*> stringTableConstants;
     CodegenContext *constructorsCtx;
     CodegenContext *destructorsCtx;
+    std::stack<CodegenContext*> constructorsCtxStack;
+    std::stack<CodegenContext*> destructorsCtxStack;
 
     bool _inlineEnabled;
     bool _exceptionsEnabled;
@@ -1084,6 +1182,11 @@ struct CompilerState : public Object {
     //externals
     Pointer<ExternalTarget> externalTarget;
 
+    //evaluator
+    llvm::StringMap<const void*> staticStringTableConstants;
+    vector<EValuePtr> stackEValues;
+
+    llvm::StringMap<ExternalProcedurePtr> externalProcedures;
 
 };
 
@@ -1428,7 +1531,7 @@ struct ForeignExpr : public Expr {
         : Expr(FOREIGN_EXPR), moduleName(moduleName),
           foreignEnv(foreignEnv), expr(expr) {}
 
-    EnvPtr getEnv(CompilerStatePtr cst);
+    EnvPtr getEnv(CompilerState* cst);
 };
 
 struct ObjectExpr : public Expr {
@@ -1727,7 +1830,7 @@ struct ForeignStatement : public Statement {
         : Statement(FOREIGN_STATEMENT), moduleName(moduleName),
           foreignEnv(foreignEnv), statement(statement) {}
 
-    EnvPtr getEnv(CompilerStatePtr cst);
+    EnvPtr getEnv(CompilerState* cst);
 };
 
 struct Try : public Statement {
@@ -2221,6 +2324,8 @@ enum CallingConv {
 };
 
 struct ExternalProcedure : public TopLevelItem {
+
+
     vector<ExternalArgPtr> args;
     ExprPtr returnType;
     StatementPtr body;
@@ -2242,21 +2347,25 @@ struct ExternalProcedure : public TopLevelItem {
     bool analyzed:1;
     bool bodyCodegenned:1;
 
-    ExternalProcedure(Module *module, Visibility visibility)
-        : TopLevelItem(EXTERNAL_PROCEDURE, module, visibility),
+    ExternalProcedure(Module *module, Visibility visibility, 
+                      IdentifierPtr name, CompilerState* cst)
+        : TopLevelItem(EXTERNAL_PROCEDURE, module, name, visibility),
           attributes(new ExprList()),
           llvmFunc(NULL), debugInfo(NULL),
           hasVarArgs(false),
           attributesVerified(false),
           analyzed(false), bodyCodegenned(false)
-        {}
+        {
+            cst->externalProcedures[name->str] = this;
+    }
     ExternalProcedure(Module *module, IdentifierPtr name,
                       Visibility visibility,
                       llvm::ArrayRef<ExternalArgPtr> args,
                       bool hasVarArgs,
                       ExprPtr returnType,
                       StatementPtr body,
-                      ExprListPtr attributes)
+                      ExprListPtr attributes,
+                      CompilerState* cst)
         : TopLevelItem(EXTERNAL_PROCEDURE, module, name, visibility), args(args),
           returnType(returnType), body(body),
           attributes(attributes),
@@ -2264,7 +2373,9 @@ struct ExternalProcedure : public TopLevelItem {
           hasVarArgs(hasVarArgs),
           attributesVerified(false),
           analyzed(false), bodyCodegenned(false)
-        {}
+        {
+            cst->externalProcedures[name->str] = this;
+    }
 
     llvm::DISubprogram getDebugInfo() { return llvm::DISubprogram(debugInfo); }
 };
@@ -2479,7 +2590,7 @@ struct Module : public ANode {
         DONE
     };
 
-    CompilerStatePtr cst;
+    CompilerState* cst;
 
     SourcePtr source;
     string moduleName;
@@ -2516,7 +2627,7 @@ struct Module : public ANode {
 
     llvm::TrackingVH<llvm::MDNode> debugInfo;
 
-    Module(CompilerStatePtr cst, llvm::StringRef moduleName)
+    Module(CompilerState* cst, llvm::StringRef moduleName)
         : ANode(MODULE), moduleName(moduleName),
           initState(BEFORE),
           publicSymbolsLoading(0),
@@ -2529,7 +2640,7 @@ struct Module : public ANode {
           isIntrinsicsModule(false),
           debugInfo(NULL),
           cst(cst) {}
-    Module(CompilerStatePtr cst, 
+    Module(CompilerState* cst, 
            llvm::StringRef moduleName,
            llvm::ArrayRef<ImportPtr> imports,
            ModuleDeclarationPtr declaration,
@@ -2650,9 +2761,9 @@ struct Env : public Object {
     ObjectPtr parent;
     const bool exceptionAvailable;
     ExprPtr callByNameExprHead;
-    CompilerStatePtr cst;
+    CompilerState* cst;
     llvm::StringMap<ObjectPtr> entries;
-    Env(CompilerStatePtr cst)
+    Env(CompilerState* cst)
         : Object(ENV), exceptionAvailable(false), cst(cst) {}
     Env(ModulePtr parent)
         : Object(ENV), parent(parent.ptr()), exceptionAvailable(false),
@@ -2661,14 +2772,6 @@ struct Env : public Object {
         : Object(ENV), parent(parent.ptr()), exceptionAvailable(exceptionAvailable),
           cst(parent->cst) {}
 };
-
-
-
-//
-// interactive module
-//
-
-void runInteractive(ModulePtr module);
 
 
 //
@@ -2695,7 +2798,7 @@ enum TypeKind {
 };
 
 struct Type : public Object {
-    CompilerStatePtr cst;
+    CompilerState* cst;
 
     TypeKind typeKind;
     llvm::Type *llType;
@@ -2709,7 +2812,7 @@ struct Type : public Object {
     bool defined:1;
     bool typeInfoInitialized:1;
     
-    Type(TypeKind typeKind, CompilerStatePtr cst)
+    Type(TypeKind typeKind, CompilerState* cst)
         : Object(TYPE), typeKind(typeKind),
           llType(NULL), debugInfo(NULL),
           overloadsInitialized(false),
@@ -2728,28 +2831,28 @@ struct Type : public Object {
 };
 
 struct BoolType : public Type {
-    BoolType(CompilerStatePtr cst) :
+    BoolType(CompilerState* cst) :
         Type(BOOL_TYPE, cst) {}
 };
 
 struct IntegerType : public Type {
     unsigned bits:15;
     bool isSigned:1;
-    IntegerType(unsigned bits, bool isSigned, CompilerStatePtr cst)
+    IntegerType(unsigned bits, bool isSigned, CompilerState* cst)
         : Type(INTEGER_TYPE, cst), bits(bits), isSigned(isSigned) {}
 };
 
 struct FloatType : public Type {
     unsigned bits:15;
     bool isImaginary:1;
-    FloatType(unsigned bits, bool isImaginary, CompilerStatePtr cst)
+    FloatType(unsigned bits, bool isImaginary, CompilerState* cst)
         : Type(FLOAT_TYPE, cst), bits(bits), isImaginary(isImaginary){}
 };
 
 struct ComplexType : public Type {
     const llvm::StructLayout *layout;
     unsigned bits:15;
-    ComplexType(unsigned bits, CompilerStatePtr cst)
+    ComplexType(unsigned bits, CompilerState* cst)
         : Type(COMPLEX_TYPE, cst), layout(NULL), bits(bits) {}
 };
 
@@ -2768,7 +2871,7 @@ struct CodePointerType : public Type {
     CodePointerType(llvm::ArrayRef<TypePtr> argTypes,
                     llvm::ArrayRef<uint8_t> returnIsRef,
                     llvm::ArrayRef<TypePtr> returnTypes,
-                    CompilerStatePtr cst)
+                    CompilerState* cst)
         : Type(CODE_POINTER_TYPE, cst), argTypes(argTypes),
           returnIsRef(returnIsRef), returnTypes(returnTypes) {}
 };
@@ -2789,7 +2892,7 @@ struct CCodePointerType : public Type {
                      llvm::ArrayRef<TypePtr> argTypes,
                      bool hasVarArgs,
                      TypePtr returnType,
-                     CompilerStatePtr cst)
+                     CompilerState* cst)
         : Type(CCODE_POINTER_TYPE, cst),
           argTypes(argTypes),
           returnType(returnType), callType(NULL),
@@ -2815,18 +2918,18 @@ struct VecType : public Type {
 struct TupleType : public Type {
     vector<TypePtr> elementTypes;
     const llvm::StructLayout *layout;
-    TupleType(CompilerStatePtr cst)
+    TupleType(CompilerState* cst)
         : Type(TUPLE_TYPE, cst), layout(NULL) {}
-    TupleType(llvm::ArrayRef<TypePtr> elementTypes, CompilerStatePtr cst)
+    TupleType(llvm::ArrayRef<TypePtr> elementTypes, CompilerState* cst)
         : Type(TUPLE_TYPE, cst), elementTypes(elementTypes),
           layout(NULL) {}
 };
 
 struct UnionType : public Type {
     vector<TypePtr> memberTypes;
-    UnionType(CompilerStatePtr cst)
+    UnionType(CompilerState* cst)
         : Type(UNION_TYPE, cst) {}
-    UnionType(llvm::ArrayRef<TypePtr> memberTypes, CompilerStatePtr cst)
+    UnionType(llvm::ArrayRef<TypePtr> memberTypes, CompilerState* cst)
         : Type(UNION_TYPE, cst), memberTypes(memberTypes)
         {}
 };
@@ -2881,7 +2984,7 @@ struct VariantType : public Type {
 
 struct StaticType : public Type {
     ObjectPtr obj;
-    StaticType(ObjectPtr obj, CompilerStatePtr cst)
+    StaticType(ObjectPtr obj, CompilerState* cst)
         : Type(STATIC_TYPE, cst), obj(obj) {}
 };
 
@@ -2889,7 +2992,7 @@ struct EnumType : public Type {
     EnumDeclPtr enumeration;
     bool initialized:1;
 
-    EnumType(EnumDeclPtr enumeration, CompilerStatePtr cst)
+    EnumType(EnumDeclPtr enumeration, CompilerState* cst)
         : Type(ENUM_TYPE, cst), enumeration(enumeration), initialized(false) {}
 };
 
