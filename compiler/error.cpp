@@ -10,6 +10,12 @@ namespace clay {
 
 bool shouldPrintFullMatchErrors;
 set<pair<string,string> > logMatchSymbols;
+void matchBindingError(MatchResultPtr const &result);
+
+extern "C" double foo(double arg0) {
+    exit(0);
+    return arg0;
+}
 
 
 //

@@ -74,7 +74,7 @@ if(ENABLE_PCH)
 precompile_header(clay.hpp SOURCES pch.cpp "${CLAY_CXXFLAGS}")
 endif(ENABLE_PCH)
 
-add_library(compiler STATIC ${COMPILER_SOURCES})
+add_library(compiler SHARED ${COMPILER_SOURCES})
 add_executable(clay ${CLAY_SOURCES})
 add_executable(claydoc ${CLAYDOC_SOURCES})
 set_target_properties(compiler PROPERTIES COMPILE_FLAGS "${CLAY_CXXFLAGS}")

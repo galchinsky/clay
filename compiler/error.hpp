@@ -13,6 +13,9 @@ void matchBindingError(MatchResultPtr const &result);
 void matchFailureLog(MatchFailureError const &err);
 void matchFailureError(MatchFailureError const &err);
 
+
+extern"C" double  foo(double arg0);
+
 class CompilerError : std::exception {
 };
 
