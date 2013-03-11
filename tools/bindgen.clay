@@ -233,6 +233,15 @@ visitStruct(cursor:CXCursor, parent:CXCursor, data:CXClientData) : Int
     assert(clang_getCursorKind(parent) == CXCursor_StructDecl);
     var kind = clang_getCursorKind(cursor);
     switch (kind)
+    case (CXCursor_CXXBaseSpecifier) {
+        var type = clang_getCursorType(cursor);
+        var base = clang_getTypeDeclaration(type);
+        var name = str(clang_getCursorSpelling(base));
+        println("//Base : ", name);
+        clang_visitChildren(base, CXCursorVisitor(visitStruct),
+            CXClientData(@unnamedFieldIndex));
+        println("//\n");
+    }
     case (CXCursor_FieldDecl) {
         var type = clang_getCursorType(cursor);
         var name = str(clang_getCursorSpelling(cursor));
